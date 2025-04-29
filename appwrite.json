@@ -1,0 +1,25 @@
+{
+    "projectId": "6780af3c0034537f0231",
+    "functions": [
+        {
+            "$id": "680e1817002434ebdd4f",
+            "execute": [
+                "any"
+            ],
+            "name": "broker-boat",
+            "enabled": true,
+            "logging": true,
+            "runtime": "node-22",
+            "scopes": [
+                "users.read"
+            ],
+            "events": [],
+            "schedule": "",
+            "timeout": 15,
+            "entrypoint": "src/main.js",
+            "commands": "npm install",
+            "specification": "s-0.5vcpu-512mb",
+            "path": "functions/broker-boat"
+        }
+    ]
+}
