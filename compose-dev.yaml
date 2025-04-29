@@ -1,8 +1,5 @@
 services:
   app:
-    entrypoint:
-    - sleep
-    - infinity
     image: node:lts
     init: true
     volumes:
