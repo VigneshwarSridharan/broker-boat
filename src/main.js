@@ -18,7 +18,7 @@ export default async (ctx) => {
     return res.json({ message: 'Invalid path' });
   }
 
-  const today = moment().tz('Asia/Kolkata').add(2, 'days').hour(14);
+  const today = moment().tz('Asia/Kolkata');
 
   log("Checking market timings for today: ", today.format('YYYY-MM-DD HH:mm:ss'));
   const marketTimings = await APIClient.get(
@@ -26,6 +26,7 @@ export default async (ctx) => {
   ).then(({ data: res }) => res.data);
 
   if (!marketTimings.length) {
+    log('Market is closed today');
     return res.json({ message: 'Market is holiday' });
   }
 
@@ -40,6 +41,7 @@ export default async (ctx) => {
     today.isBefore(NSEMarketOpen) ||
     today.isAfter(NSEMarketClose)
   ) {
+    log('Market is closed');
     return res.json({ message: 'Market is closed' });
   }
 
@@ -140,9 +142,9 @@ export default async (ctx) => {
   }
 
 
-  log('Path: ', req.path);
-
+  
   const endTime = new Date().getTime();
   const duration = endTime - startTime;
+  log(`Path: ${req.path} - Method: ${req.method} - Duration: ${duration}ms`);
   return res.json({ ...result, duration });
 };
