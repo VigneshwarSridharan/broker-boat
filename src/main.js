@@ -1,8 +1,6 @@
 import axios from 'axios';
 import moment from 'moment';
-// Add the following import for moment-timezone
 import 'moment-timezone';
-import { Client, Users } from 'node-appwrite';
 
 const APIClient = axios.create({
   baseURL: 'https://api.upstox.com/v2',
@@ -12,86 +10,139 @@ const APIClient = axios.create({
   },
 });
 
-const getHistoricalData = async (instrumentKey, log) => {
-  const historicalData = await APIClient.get(
-    `/historical-candle/${instrumentKey}/day/2023-12-31/2023-01-01`
-  ).then((res) => res.data);
-  const candles = historicalData.data.candles.reverse();
-  const days = candles
-    .reduce((final, candle, inx) => {
-      if (inx === 0 || inx === candles.length - 1) {
-        return final;
-      }
-
-      const [timestamp, open, high, low, close, volume] = candle;
-      const [
-        previousTimestamp,
-        previousOpen,
-        previousHigh,
-        previousLow,
-        previousClose,
-        previousVolume,
-      ] = historicalData.data.candles[inx - 1];
-      const date = new Date(timestamp);
-      const previousDate = new Date(previousTimestamp);
-
-      log(
-        `Date: ${date.toISOString().split('T')[0]}, prevDate: ${previousDate.toISOString().split('T')[0]} Change: ${Number((((close - previousClose) / previousClose) * 100).toFixed(2))}`
-      );
-      final.push({
-        date: moment(timestamp).format('DD MMM YYYY'),
-        change: Number(
-          (((close - previousClose) / previousClose) * 100).toFixed(2)
-        ),
-      });
-
-      return final;
-    }, [])
-    .filter((day) => day.change < -1);
-
-  // Log the historical data to the console
-  return days;
-};
-
-const placeOrder = async ({ order, log }) => {
-  const response = await APIClient.post(`/order/place`, order)
-    .then((res) => res.data)
-    .catch((err) => {
-      log(`Error placing order: ${err}`);
-      throw err;
-    });
-
-  log(`Order placed: ${JSON.stringify(response)}`);
-  return response;
-};
-
 export default async (ctx) => {
+  const startTime = new Date().getTime();
   const { req, res, log, error } = ctx;
 
-  const today = moment().tz('Asia/Kolkata');
-  const result = await APIClient.get(
-    `/market/timing/${today.format('YYYY-MM-DD')}`
-  ).then((res) => res.data);
+  if (req.path !== "/") {
+    return res.json({ message: 'Invalid path' });
+  }
 
-  // const historicalData = await getHistoricalData('NSE_EQ|INF109KB15Y7', log);
+  const today = moment().tz('Asia/Kolkata').add(2, 'days').hour(14);
+
+  log("Checking market timings for today: ", today.format('YYYY-MM-DD HH:mm:ss'));
+  const marketTimings = await APIClient.get(
+    `/market/timings/${today.format('YYYY-MM-DD')}`
+  ).then(({ data: res }) => res.data);
+
+  if (!marketTimings.length) {
+    return res.json({ message: 'Market is holiday' });
+  }
+
+  const NSEMarketTiming = marketTimings.find(
+    (market) => market.exchange === 'NSE'
+  );
+
+  const NSEMarketOpen = moment(NSEMarketTiming.start_time).tz('Asia/Kolkata');
+  const NSEMarketClose = moment(NSEMarketTiming.end_time).tz('Asia/Kolkata');
+
+  if (
+    today.isBefore(NSEMarketOpen) ||
+    today.isAfter(NSEMarketClose)
+  ) {
+    return res.json({ message: 'Market is closed' });
+  }
+
+  const stocks = [
+    // 'NSE_EQ|INE154A01025', // ITC Limited
+    'NSE_EQ|INF209KB19D1', // Aditya Birla Sun Life Nifty 50 ETF 
+    'NSE_EQ|INF277KA1976', // Tata Mutual Fund Tata Gold Exchange Traded Fund
+  ];
+
+  const result = {
+    status: 'success',
+  };
+  for (const stock of stocks) {
+    log('Fetching data for stock:', stock);
+
+    const intradayCandles = await APIClient.get(
+      `/historical-candle/intraday/${stock}/30minute`,
+    ).then(({ data: res }) => res.data.candles)
+
+    let inx = 0;
+    let change = 0;
+    let qty = 0;
+    let ltp = intradayCandles?.[0]?.[4] || 0
+    do {
+      if (inx >= intradayCandles.length) {
+        break;
+      }
+      const Candle = intradayCandles[inx];
+      const [timestamp, open, high, low, close] = Candle;
+      const prevCandle = intradayCandles[inx + 1];
+      const [prevTimestamp, prevOpen, prevHigh, prevLow, prevClose] = prevCandle;
+
+      change = Number(
+        (((prevClose - close) / close) * 100).toFixed(2)
+      );
+      if (change < 0) {
+        qty++;
+      }
+
+      inx++;
+    } while (change < 0);
+
+    if (qty > 0) {
+
+      const fundDetails = await APIClient.get(
+        `/user/get-funds-and-margin`
+      ).then(({ data: res }) => res.data);
+
+      const balance = fundDetails.equity.available_margin;
+
+      if (balance < 0) {
+        log(`Insufficient funds: ${balance}`);
+        return res.json({ message: 'Insufficient funds' });
+      }
+
+      const brokerageDetails = await APIClient.get(
+        `/charges/brokerage?instrument_token=${stock}&quantity=${qty}&product=D&transaction_type=BUY&price=${ltp}`
+      ).then(({ data: res }) => res.data);
+
+      const charges = brokerageDetails.charges.total
+
+      const totalPrice = (qty * ltp) + charges
+
+
+      if (balance < totalPrice) {
+        log(`Balance Required: ${totalPrice}. Current balance: ${balance}`)
+        return res.json({ message: 'Insufficient funds' });
+      }
+
+
+
+      const order = await APIClient.post(`/order/place`, {
+        quantity: qty,
+        product: 'D',
+        validity: 'DAY',
+        price: 0,
+        instrument_token: stock,
+        order_type: 'MARKET',
+        transaction_type: 'BUY',
+        disclosed_quantity: 0,
+        trigger_price: 0,
+        is_amo: false,
+      }
+      )
+        .then(({ data: res }) => res.data)
+        .catch((err) => {
+          log(`Error placing order: ${err}`);
+          throw err;
+        });
+      log(`Order placed: ${JSON.stringify(order)}`);
+      log(`Quantity: ${qty}`)
+      log(`Trade Value (${qty} * ${ltp}): ${qty*ltp}`)
+      log(`Charges: ${charges}`)
+      log(`Total: ${((qty*ltp)+charges).toFixed(2)}`)
+    }
+
+
+  }
+
 
   log('Path: ', req.path);
 
-  // const result = await placeOrder({
-  //   order: {
-  //     quantity: 1,
-  //     product: 'D',
-  //     validity: 'DAY',
-  //     price: 0,
-  //     instrument_token: 'NSE_EQ|INF109KB15Y7',
-  //     order_type: 'MARKET',
-  //     transaction_type: 'BUY',
-  //     disclosed_quantity: 0,
-  //     trigger_price: 0,
-  //     is_amo: false,
-  //   },
-  //   ...ctx,
-  // });
-
-  return res.json({ result });
+  const endTime = new Date().getTime();
+  const duration = endTime - startTime;
+  return res.json({ ...result, duration });
 };
