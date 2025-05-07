@@ -72,6 +72,9 @@ export default async (ctx) => {
       const Candle = intradayCandles[inx];
       const [timestamp, open, high, low, close] = Candle;
       const prevCandle = intradayCandles[inx + 1];
+      if (!prevCandle) {
+        break;
+      }
       const [prevTimestamp, prevOpen, prevHigh, prevLow, prevClose] = prevCandle;
 
       change = Number(
