@@ -53,6 +53,7 @@ export default async (ctx) => {
 
   const result = {
     status: 'success',
+    orders:[],
   };
   for (const stock of stocks) {
     log('Fetching data for stock:', stock);
@@ -73,7 +74,7 @@ export default async (ctx) => {
       const [timestamp, open, high, low, close] = Candle;
       const prevCandle = intradayCandles[inx + 1];
       if (!prevCandle) {
-        break;
+        continue;
       }
       const [prevTimestamp, prevOpen, prevHigh, prevLow, prevClose] = prevCandle;
 
@@ -97,7 +98,10 @@ export default async (ctx) => {
 
       if (balance < 0) {
         log(`Insufficient funds: ${balance}`);
-        return res.json({ message: 'Insufficient funds' });
+        result.orders.push({
+          message:`Insufficient funds: ${balance}`
+        })
+        continue;
       }
 
       const brokerageDetails = await APIClient.get(
@@ -111,7 +115,11 @@ export default async (ctx) => {
 
       if (balance < totalPrice) {
         log(`Balance Required: ${totalPrice}. Current balance: ${balance}`)
-        return res.json({ message: 'Insufficient funds' });
+        result.orders.push({
+          message:`Balance Required: ${totalPrice}. Current balance: ${balance}`
+        })
+        continue
+        
       }
 
 
